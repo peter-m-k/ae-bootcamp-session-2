@@ -4,40 +4,50 @@ This document describes best practices for writing and organizing tests across t
 
 ## Unit Tests
 
-- **Folder organization**: Place unit tests next to the code they test, in a `__tests__` folder within the same package (e.g. `packages/backend/src/__tests__/`, `packages/frontend/src/__tests__/`).
-- **File naming convention**: Name test files after the module under test, using the `.test.js` suffix (e.g. `app.js` -> `app.test.js`).
-- **1:1 mapping**: Each source file (function, module, or class) should have a corresponding test file. Avoid bundling unrelated units into a single test file.
-- **Use of env vars**: Never hardcode secrets, ports, or environment-specific values in tests. Read configuration from environment variables (with sensible defaults) and use `.env.test` files where supported.
-- **Order-independence & parallelism**: Each test should set up and tear down its own state (e.g. via `beforeEach`/`afterEach`) so tests do not depend on execution order and can run safely in parallel.
+Unit tests verify a single function, module, or class in isolation, with all collaborators mocked or stubbed.
+
+- Co-locate tests with the source they cover, e.g. `packages/backend/src/__tests__/` mirroring `packages/backend/src/`, so it's obvious when a source file has no test.
+- Name test files after the exact module under test (`orders.js` -> `orders.test.js`); if a module grows multiple test files, suffix by concern (`orders.validation.test.js`) rather than splitting arbitrarily.
+- Aim for one test file per module, but don't force a 1:1 file split for trivial helpers exported from the same file — group by "unit of behavior," not strictly by file.
+- Never read real environment variables in a unit test; inject config as function parameters or mock `process.env` explicitly so tests aren't affected by the machine they run on.
+- Since units are cheap and numerous, keep them fast and side-effect-free (no filesystem/network/timers) — this is what makes order-independence and parallel execution trivial rather than something to engineer around.
 
 ## Component (Whole Repo) Tests
 
-- **Folder organization**: Keep component-level tests (tests that exercise a whole package/module in isolation, e.g. the backend Express app) in the package's `__tests__` directory, separate from unit tests where practical (e.g. `__tests__/component/`).
-- **File naming convention**: Suffix files with `.test.js`, using descriptive names that reflect the component being tested (e.g. `app.component.test.js`).
-- **1:1 mapping**: Aim for one test file per top-level component/module (e.g. one file for the Express app, one for a major React feature), rather than one giant catch-all test file.
-- **Use of env vars**: Configure the component under test (ports, database paths, feature flags) through environment variables so tests can run identically in local and CI environments.
-- **Order-independence & parallelism**: Use isolated, in-memory resources (e.g. a fresh in-memory database instance per test suite) so component tests don't share state and can run in parallel across test files.
+These tests exercise a whole package (e.g. the entire backend Express app, or the whole database layer) as a black box, without spinning up other services.
+
+- Keep these under the package's `__tests__/` folder alongside unit tests (as in `packages/backend/__tests__/app.test.js`), since they still test one package in isolation — a separate top-level folder is unnecessary overhead at this scope.
+- Name files after the package entry point or subsystem being exercised (`app.test.js`, `database.test.js`), not after individual internal functions.
+- A 1:1 mapping to source files doesn't apply here — instead map one test file per public surface (e.g. one file covering all `app.js` routes, one covering the DB layer), since the point is testing integration within the package.
+- Use environment variables to select in-memory or test-mode implementations (e.g. an in-memory SQLite database instead of a file-based one) so the whole package can be tested without external dependencies.
+- Reset the package's internal state (e.g. re-create the in-memory database) in `beforeEach` so tests don't depend on run order; this is also what allows Jest to shard/parallelize test files safely.
 
 ## Integration Tests
 
-- **Folder organization**: Store integration tests in a dedicated `__tests__/integration/` (or top-level `integration/`) folder, separate from unit and component tests, since they typically span multiple modules or services (e.g. API + database).
-- **File naming convention**: Use a `.integration.test.js` suffix to clearly distinguish these from unit/component tests (e.g. `orders.integration.test.js`).
-- **1:1 mapping**: Organize integration test files around user-facing flows or API routes (one file per route/feature) rather than mirroring individual source files.
-- **Use of env vars**: Use environment variables to point at test instances of external dependencies (databases, APIs), never against production resources.
-- **Order-independence & parallelism**: Seed and clean up test data per test (or per test file) so integration tests don't leak state between runs and can be executed in parallel or in any order.
+Integration tests verify that two or more real pieces of the system work together (e.g. the backend API talking to a real database, or the frontend talking to a running backend).
+
+- Organize by the boundary being crossed, e.g. `__tests__/integration/api-db/` for backend-to-database, separate from `__tests__/integration/frontend-api/` for frontend-to-backend — the folder should communicate *which* integration is under test.
+- Name files after the flow or route being integrated (`create-order.integration.test.js`), not after a single source file, since these tests span multiple files by nature.
+- Don't force 1:1 with source files; instead aim for 1:1 with API endpoints or cross-boundary flows — one file per endpoint/flow keeps failures easy to localize.
+- Point at real but disposable infrastructure via env vars (e.g. `TEST_DATABASE_PATH`, `API_BASE_URL`) so the same tests can run locally and in CI without code changes, and so they never touch production data.
+- Because these tests share real infrastructure (a database, a server), be deliberate about isolation: use unique keys/IDs per test or transactional rollbacks, since "just don't share state" is harder to achieve than in unit tests but more important given the shared resource.
 
 ## E2E Tests
 
-- **Folder organization**: Keep end-to-end tests in a top-level `e2e/` folder, outside of `packages/`, since they exercise the frontend and backend together.
-- **File naming convention**: Name files after the user flow they cover, with a `.e2e.test.js` (or framework-specific, e.g. `.spec.ts` for Playwright/Cypress) suffix (e.g. `checkout.e2e.test.js`).
-- **1:1 mapping**: Map each test file to a single end-to-end user flow (e.g. sign up, login, checkout) rather than testing multiple unrelated flows in one file.
-- **Use of env vars**: Drive base URLs, credentials, and timeouts entirely from environment variables so the same suite can target local, staging, or CI environments.
-- **Order-independence & parallelism**: Design flows to create and clean up their own data (e.g. unique test users per run) so scenarios can run in parallel without colliding.
+E2E tests drive the full stack (browser + frontend + backend) through real user flows, and are the slowest and most brittle by nature.
+
+- Keep them outside `packages/`, in a top-level `e2e/` folder, since they test the product as a whole rather than any one package.
+- Name files after the user journey, not a technical unit (`checkout-flow.e2e.spec.js`, `login-flow.e2e.spec.js`) — readability of the flow matters more than mapping to code structure.
+- Favor a small number of high-value flows over exhaustive 1:1 coverage of every screen; each file should represent one complete journey a real user would take.
+- Use env vars for the target URL, browser/headless mode, and timeouts (`E2E_BASE_URL`, `HEADLESS`, `E2E_TIMEOUT_MS`) so the same suite runs against local dev, staging, and CI.
+- Because E2E tests are inherently the flakiest, invest specifically in unique/generated test data per run (not just per test) and avoid relying on fixed seed data, so tests can be retried and parallelized across browser workers without colliding.
 
 ## UI Tests
 
-- **Folder organization**: Co-locate UI/component-rendering tests with the React components they cover, under `src/__tests__/` or alongside the component (e.g. `Component.jsx` + `Component.test.jsx`).
-- **File naming convention**: Match the component's file name with a `.test.js`/`.test.jsx` suffix (e.g. `App.js` -> `App.test.js`).
-- **1:1 mapping**: Maintain one test file per component, testing its rendering, props, and user interactions rather than combining multiple components in one file.
-- **Use of env vars**: Mock or stub network calls and read any environment-dependent configuration (e.g. API base URL) from environment variables rather than hardcoding values.
-- **Order-independence & parallelism**: Render a fresh instance of the component in each test (e.g. via `render()` in `beforeEach` or per-test) and avoid shared mutable state so tests can run in any order or in parallel.
+UI tests render individual React components and assert on markup, accessibility, and user interaction, without a real backend.
+
+- Co-locate with the component itself (`Component.jsx` next to `Component.test.jsx`, or in a nearby `__tests__/` folder) so the test is immediately visible when editing the component.
+- Match the component's file name exactly (`OrderCard.js` -> `OrderCard.test.js`) so the pairing is unambiguous.
+- Maintain a genuine 1:1 mapping between components and test files here — unlike other test types, each component's rendering/interaction logic is self-contained enough to justify one file per component.
+- Never call real APIs; mock network/data-fetching layers, and only use env vars for things like feature-flag defaults — most "configuration" a UI test needs should come from props/mocks, not the environment.
+- Use React Testing Library's `render()`/`screen` queries fresh in each test (via `beforeEach` or per-test setup) rather than sharing a rendered instance across tests, so tests remain order-independent and safe to parallelize across files.
