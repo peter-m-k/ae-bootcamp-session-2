@@ -1,122 +1,125 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import './App.css';
+import { createTask, deleteTask, fetchTasks, updateTask } from './api/tasksApi';
+import FilterSortControls from './components/FilterSortControls';
+import SearchBar from './components/SearchBar';
+import TaskForm from './components/TaskForm';
+import TaskList from './components/TaskList';
+import ThemeToggle from './components/ThemeToggle';
+import useTheme from './hooks/useTheme';
 
 function App() {
-  const [data, setData] = useState([]);
+  const { theme, toggleTheme } = useTheme();
+  const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [newItem, setNewItem] = useState('');
+  const [search, setSearch] = useState('');
+  const [status, setStatus] = useState('all');
+  const [sortBy, setSortBy] = useState('created_at');
+  const [sortOrder, setSortOrder] = useState('desc');
 
   useEffect(() => {
-    fetchData();
-  }, []);
+    let isCancelled = false;
 
-  const fetchData = async () => {
-    try {
-      setLoading(true);
-      const response = await fetch('/api/items');
-      if (!response.ok) {
-        throw new Error('Network response was not ok');
+    const loadTasks = async () => {
+      try {
+        setLoading(true);
+        const result = await fetchTasks({ q: search, status, sortBy, sortOrder });
+        if (!isCancelled) {
+          setTasks(result);
+          setError(null);
+        }
+      } catch (err) {
+        if (!isCancelled) {
+          setError('Failed to fetch tasks: ' + err.message);
+        }
+      } finally {
+        if (!isCancelled) {
+          setLoading(false);
+        }
       }
-      const result = await response.json();
-      setData(result);
+    };
+
+    // Debounce so full-text search doesn't fire a request per keystroke.
+    const timeoutId = setTimeout(loadTasks, 300);
+    return () => {
+      isCancelled = true;
+      clearTimeout(timeoutId);
+    };
+  }, [search, status, sortBy, sortOrder]);
+
+  const handleCreate = async ({ title, description }) => {
+    try {
+      const newTask = await createTask({ title, description });
+      setTasks((current) => [newTask, ...current]);
       setError(null);
     } catch (err) {
-      setError('Failed to fetch data: ' + err.message);
-      console.error('Error fetching data:', err);
-    } finally {
-      setLoading(false);
+      setError('Error adding task: ' + err.message);
     }
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!newItem.trim()) return;
-
+  const handleUpdate = async (id, updates) => {
     try {
-      const response = await fetch('/api/items', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ name: newItem }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to add item');
-      }
-
-      const result = await response.json();
-      setData([...data, result]);
-      setNewItem('');
+      const updatedTask = await updateTask(id, updates);
+      setTasks((current) => current.map((task) => (task.id === id ? updatedTask : task)));
+      setError(null);
     } catch (err) {
-      setError('Error adding item: ' + err.message);
-      console.error('Error adding item:', err);
+      setError('Error updating task: ' + err.message);
     }
   };
 
-  const handleDelete = async (itemId) => {
+  const handleToggleComplete = (task) => handleUpdate(task.id, { completed: !task.completed });
+
+  const handleDelete = async (id) => {
     try {
-      const response = await fetch(`/api/items/${itemId}`, {
-        method: 'DELETE',
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to delete item');
-      }
-
-      setData(data.filter(item => item.id !== itemId));
+      await deleteTask(id);
+      setTasks((current) => current.filter((task) => task.id !== id));
       setError(null);
     } catch (err) {
-      setError('Error deleting item: ' + err.message);
-      console.error('Error deleting item:', err);
+      setError('Error deleting task: ' + err.message);
     }
+  };
+
+  const handleSortChange = ({ sortBy: newSortBy, sortOrder: newSortOrder }) => {
+    setSortBy(newSortBy);
+    setSortOrder(newSortOrder);
   };
 
   return (
     <div className="App">
-      <header className="App-header">
-        <h1>To Do App</h1>
-        <p>Keep track of your tasks</p>
+      <header className="App-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <div>
+          <h1>To Do App</h1>
+          <p className="mb-0">Keep track of your tasks</p>
+        </div>
+        <ThemeToggle theme={theme} onToggle={toggleTheme} />
       </header>
 
-      <main>
-        <section className="add-item-section">
-          <h2>Add New Item</h2>
-          <form onSubmit={handleSubmit}>
-            <input
-              type="text"
-              value={newItem}
-              onChange={(e) => setNewItem(e.target.value)}
-              placeholder="Enter item name"
-            />
-            <button type="submit">Add Item</button>
-          </form>
+      <main className="container">
+        <section className="add-task-section mb-4">
+          <h2 className="h5">Add New Task</h2>
+          <TaskForm onCreate={handleCreate} />
         </section>
 
-        <section className="items-section">
-          <h2>Items from Database</h2>
-          {loading && <p>Loading data...</p>}
+        <section className="tasks-section">
+          <h2 className="h5">Tasks</h2>
+          <SearchBar value={search} onChange={setSearch} />
+          <FilterSortControls
+            status={status}
+            onStatusChange={setStatus}
+            sortBy={sortBy}
+            sortOrder={sortOrder}
+            onSortChange={handleSortChange}
+          />
+          {loading && <p>Loading tasks...</p>}
           {error && <p className="error">{error}</p>}
           {!loading && !error && (
-            <ul>
-              {data.length > 0 ? (
-                data.map((item) => (
-                  <li key={item.id}>
-                    <span>{item.name}</span>
-                    <button 
-                      onClick={() => handleDelete(item.id)}
-                      className="delete-btn"
-                      type="button"
-                    >
-                      Delete
-                    </button>
-                  </li>
-                ))
-              ) : (
-                <p>No items found. Add some!</p>
-              )}
-            </ul>
+            <TaskList
+              tasks={tasks}
+              onToggleComplete={handleToggleComplete}
+              onUpdate={handleUpdate}
+              onDelete={handleDelete}
+            />
           )}
         </section>
       </main>
