@@ -8,7 +8,7 @@ The application must use a responsive layout that adapts to different screen siz
 
 Use Bootstrap for styling components and layout throughout the application.
 
-## Color Palette
+## Color Palette 
 
 - **Primary color**: Blue
 - **Accent color**: Orange
